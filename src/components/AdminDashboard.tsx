@@ -38,6 +38,19 @@ const emptyForm = {
   category: "outros" as GiftCategory,
 };
 
+const normalizeProductUrl = (rawUrl: string) => {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    return new URL(withProtocol).toString();
+  } catch {
+    return null;
+  }
+};
+
 const AdminDashboard = () => {
   const [gifts, setGifts] = useState<GiftItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,14 +93,26 @@ const AdminDashboard = () => {
   };
 
   const handleScrape = async () => {
-    if (!form.purchase_url) return;
+    const normalizedUrl = normalizeProductUrl(form.purchase_url);
+    if (!normalizedUrl) {
+      toast({
+        title: "URL inválida",
+        description: "Informe uma URL válida para extrair os dados.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setScraping(true);
     try {
       const { data, error } = await supabase.functions.invoke("scrape-product", {
-        body: { url: form.purchase_url },
+        body: { url: normalizedUrl },
       });
-      if (error) throw error;
-      if (data) {
+      if (error) {
+        throw new Error(error.message || "Falha ao chamar a função de extração.");
+      }
+
+      if (data?.title || data?.price || data?.image_url) {
         setForm((prev) => ({
           ...prev,
           title: data.title || prev.title,
@@ -95,9 +120,20 @@ const AdminDashboard = () => {
           image_url: data.image_url || prev.image_url,
         }));
         toast({ title: "Dados extraídos com sucesso!" });
+      } else {
+        toast({
+          title: "Não encontrei dados nesse link",
+          description: "Preencha manualmente ou tente outra URL do produto.",
+          variant: "destructive",
+        });
       }
-    } catch {
-      toast({ title: "Não foi possível extrair dados automaticamente.", variant: "destructive" });
+    } catch (err) {
+      const description = err instanceof Error ? err.message : "Não foi possível extrair dados automaticamente.";
+      toast({
+        title: "Falha na extração",
+        description,
+        variant: "destructive",
+      });
     }
     setScraping(false);
   };

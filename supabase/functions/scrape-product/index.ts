@@ -10,27 +10,70 @@ Deno.serve(async (req) => {
 
   try {
     const { url } = await req.json();
-    if (!url) {
+    if (!url || typeof url !== 'string') {
       return new Response(JSON.stringify({ error: 'URL is required' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    console.log('Scraping URL:', url);
+    const normalizedUrl = /^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
+    let parsedUrl: URL;
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept-Encoding': 'identity',
-        'Cache-Control': 'no-cache',
-      },
-      redirect: 'follow',
-    });
+    try {
+      parsedUrl = new URL(normalizedUrl);
+    } catch {
+      return new Response(JSON.stringify({ error: 'Invalid URL' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-    const html = await response.text();
+    console.log('Scraping URL:', parsedUrl.toString());
+
+    const fetchDirect = async () => {
+      const response = await fetch(parsedUrl.toString(), {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Accept-Encoding': 'identity',
+          'Cache-Control': 'no-cache',
+        },
+        redirect: 'follow',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Direct fetch failed with status ${response.status}`);
+      }
+
+      return response.text();
+    };
+
+    const fetchFallback = async () => {
+      const fallbackUrl = `https://r.jina.ai/http://${parsedUrl.host}${parsedUrl.pathname}${parsedUrl.search}`;
+      const response = await fetch(fallbackUrl, {
+        headers: {
+          'Accept': 'text/plain,text/html;q=0.9,*/*;q=0.8',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Fallback fetch failed with status ${response.status}`);
+      }
+
+      return response.text();
+    };
+
+    let html = '';
+
+    try {
+      html = await fetchDirect();
+    } catch (directError) {
+      console.warn('Direct fetch failed. Trying fallback:', directError);
+      html = await fetchFallback();
+    }
+
     console.log('HTML length:', html.length);
 
     // Extract title - try multiple sources
